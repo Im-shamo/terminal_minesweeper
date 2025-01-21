@@ -75,7 +75,7 @@ pub enum Errors {
     CoordinatesOutOffRange,
 }
 
-pub trait Field {
+pub trait Field<T> {
     fn set_field(
         positions: &Vec<Coordinates>,
         width: usize,
@@ -93,11 +93,10 @@ pub trait Field {
 
     fn get_width(&self) -> usize;
     fn get_height(&self) -> usize;
-    fn get_field(&self) -> &Vec<Vec<bool>>;
+    fn get_field(&self) -> &Vec<Vec<T>>;
     fn get_count(&self) -> usize;
-    fn have_thing(&self, pos: &Coordinates) -> bool;
+    fn get(&self, pos: &Coordinates) -> T;
 }
-
 
 pub trait AddField {
     fn add(&mut self, pos: &Coordinates) -> Result<(), Errors>;
@@ -131,7 +130,7 @@ impl LandmineField {
     }
 }
 
-impl Field for LandmineField {
+impl Field<bool> for LandmineField {
     fn get_width(&self) -> usize {
         self.width
     }
@@ -148,7 +147,7 @@ impl Field for LandmineField {
         self.count
     }
 
-    fn have_thing(&self, pos: &Coordinates) -> bool {
+    fn get(&self, pos: &Coordinates) -> bool {
         self.field[pos.x][pos.y]
     }
 }
@@ -187,7 +186,7 @@ impl FlagsField {
     }
 }
 
-impl Field for FlagsField {
+impl Field<bool> for FlagsField {
     fn get_width(&self) -> usize {
         self.width
     }
@@ -204,7 +203,7 @@ impl Field for FlagsField {
         &self.field
     }
 
-    fn have_thing(&self, pos: &Coordinates) -> bool {
+    fn get(&self, pos: &Coordinates) -> bool {
         self.field[pos.x][pos.y]
     }
 }
@@ -249,7 +248,7 @@ impl OpenedField {
     }
 }
 
-impl Field for OpenedField {
+impl Field<bool> for OpenedField {
     fn get_width(&self) -> usize {
         self.width
     }
@@ -266,7 +265,7 @@ impl Field for OpenedField {
         &self.field
     }
 
-    fn have_thing(&self, pos: &Coordinates) -> bool {
+    fn get(&self, pos: &Coordinates) -> bool {
         self.field[pos.y][pos.x]
     }
 }
@@ -282,6 +281,68 @@ impl AddField for OpenedField {
         Ok(())
     }
 }
+#[derive(Debug, Clone)]
+pub struct NumberField {
+    width: usize,
+    height: usize,
+    field: Vec<Vec<i32>>,
+    symbol: &'static str,
+    count: usize,
+}
+
+impl NumberField {
+    pub fn new(width: usize, height: usize, landmines: &LandmineField) -> Self {
+        let field = NumberField::calculate_numbers(width, height, landmines);
+        let count = Self::count(&field);
+        NumberField {
+            width,
+            height,
+            field: vec![vec![]],
+            symbol: "░",
+            count,
+        }
+    }
+
+    fn calculate_numbers(width: usize, height: usize, landmines: &LandmineField) -> Vec<Vec<i32>> {
+        let mut field = vec![vec![0; width]; height];
+        field[1][1] = 1;
+        field
+    }
+
+    fn count(field: &Vec<Vec<i32>>) -> usize {
+        let mut count: usize = 0;
+        for row in field {
+            for n in row {
+                if *n > 0 {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+}
+
+impl Field<i32> for NumberField {
+    fn get_count(&self) -> usize {
+        self.count
+    }
+
+    fn get_field(&self) -> &Vec<Vec<i32>> {
+        &self.field
+    }
+
+    fn get_height(&self) -> usize {
+        self.height
+    }
+
+    fn get_width(&self) -> usize {
+        self.width
+    }
+
+    fn get(&self, pos: &Coordinates) -> i32 {
+        self.field[pos.y][pos.x]
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Board<'a> {
@@ -289,6 +350,7 @@ pub struct Board<'a> {
     landmines: LandmineField,
     flags: FlagsField,
     opened: OpenedField,
+    numbers: NumberField,
     framebuffer: Vec<Vec<&'a str>>,
 }
 
@@ -298,13 +360,19 @@ impl<'a> Board<'a> {
         let flags = FlagsField::new(config.width, config.height)?;
         let opened = OpenedField::new(config.width, config.height)?;
         let framebuffer = vec![vec![""; config.width + 2]; config.height + 2];
+        let numbers = NumberField::new(config.width, config.height, &landmines);
         Ok(Board {
             config,
             landmines,
             flags,
             opened,
+            numbers,
             framebuffer,
         })
+    }
+
+    pub fn get_config(&self) -> &BoardConfig {
+        &self.config
     }
 
     fn draw_border(&mut self) {
@@ -326,17 +394,20 @@ impl<'a> Board<'a> {
         for i in 1..self.config.width + 1 {
             self.framebuffer[self.config.height + 1][i] = self.config.border_bottom;
         }
-        self.framebuffer[self.config.height + 1][self.config.width + 1] = self.config.border_bottom_right_symbol;
+        self.framebuffer[self.config.height + 1][self.config.width + 1] =
+            self.config.border_bottom_right_symbol;
     }
 
     fn draw_field(&mut self) {
         for i in 0..self.config.width {
             for j in 0..self.config.height {
                 let pos = Coordinates::new(i, j);
-                self.framebuffer[j + 1] [i + 1]= if self.opened.have_thing(&pos) {
-                    if self.flags.have_thing(&pos) {
+                self.framebuffer[j + 1][i + 1] = if self.opened.get(&pos) {
+                    if self.flags.get(&pos) {
                         self.flags.symbol
-                    } else if self.landmines.have_thing(&pos) {
+                    } else if self.numbers.get(&pos) > 0 {
+                        self.numbers.symbol
+                    } else if self.landmines.get(&pos) {
                         self.landmines.symbol
                     } else {
                         self.opened.symbol_open
@@ -363,14 +434,22 @@ impl<'a> Board<'a> {
         self.opened.add(pos)?;
         Ok(())
     }
-
 }
 
 impl<'a> std::fmt::Display for Board<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for row in &self.framebuffer {
-            for symbol in row {
-                write!(f, "{}", symbol)?;
+        for (i, row) in self.framebuffer.iter().enumerate() {
+            for (j, symbol) in row.iter().enumerate() {
+                if symbol.len() == 1 && self.config.char_width == 2 {
+                    write!(
+                        f,
+                        "{}{}",
+                        self.numbers.get(&Coordinates { x: i, y: j }),
+                        self.numbers.symbol
+                    )?;
+                } else {
+                    write!(f, "{}", symbol)?;
+                }
             }
             write!(f, "\n\r")?;
         }
@@ -378,13 +457,13 @@ impl<'a> std::fmt::Display for Board<'a> {
     }
 }
 
-pub fn test1() -> Result<(), Errors>{
+pub fn test1() -> Result<(), Errors> {
     let config = BoardConfig::unicode(12, 10, Color::Reset);
-    let mine = vec![Coordinates {x: 1, y: 2}];
+    let mine = vec![Coordinates { x: 1, y: 2 }];
     let mut board = Board::new(config, &mine)?;
-    board.add_flag(&Coordinates {x: 1, y: 2})?;
-    board.click(&Coordinates {x: 1, y: 2})?;
-    board.click(&Coordinates {x: 1, y: 1})?;
+    board.add_flag(&Coordinates { x: 1, y: 2 })?;
+    board.click(&Coordinates { x: 1, y: 2 })?;
+    board.click(&Coordinates { x: 1, y: 1 })?;
     board.draw_border();
     board.print();
     Ok(())
