@@ -1,10 +1,8 @@
-use crate::mineboard::{Board, BoardConfig, Field, AddField};
+use crate::mineboard::{Board, BoardConfig, BoardError};
 use crate::utils::{Coordinates};
-use rang::prelude::*;
-use crossterm::execute;
-use crossterm::style::Print;
+use rand::prelude::*;
 
-#[derived(Clone, Eq, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub enum GameState {
     Playing,
     Win,
@@ -12,36 +10,35 @@ pub enum GameState {
     Quit
 }
 
-#[derived(Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct Game {
     board: Board,
 }
 
 impl Game {
     pub fn new(config: BoardConfig, landmine_count: usize) -> Result<Self, BoardError> {
-        let mines = gen_landmine(landmine_count, &config);
-        let board = Board::new(config, &mines);
-        let game = Self {board};
+        let mines = Self::gen_landmine(landmine_count, &config);
+        let mut board: Board = Board::new(config, &mines)?;
         board.draw_border();
-        game
+        Ok(Self {board})
     }
 
     fn gen_landmine(landmine_count: usize, config: &BoardConfig) -> Vec<Coordinates> {
-        let rng = rang::thread_rang();
+    let mut rng = rand::thread_rng();
 
-        let mines = vec![];
+        let mut mines = vec![];
 
-        let height = config.height();
-        let width = config.width();
+        let height = config.height;
+        let width = config.width;
 
         for _ in 0..landmine_count {
             let pos = loop {
                 let pos = Coordinates::new(rng.gen_range(0..width), rng.gen_range(0..height));
-                if mines.find(|&&p| p == pos) {
-                    Some(_) => continue;
-                    None => break pos;
+                if mines.iter().find(|&&p| p == pos).is_some() {
+                    continue;
                 }
-            }
+                break pos;
+            };
             mines.push(pos);
         }
         mines
@@ -55,7 +52,7 @@ impl Game {
         self.board.landmine_count()
     }
 
-    fn get_cursor_location_in_board(&self) -> Option(Coordinates) {
-        
+    fn get_cursor_location_in_board(&self) -> Option<Coordinates> {
+        Some(Coordinates {x: 0, y: 0})
     }
 }

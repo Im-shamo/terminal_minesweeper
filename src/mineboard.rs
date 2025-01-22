@@ -1,15 +1,15 @@
 use crossterm::execute;
 use crossterm::style::{Color, Print};
 use std::error::Error;
+use std::fmt;
 use std::io::Write;
-use std::path::Display;
 
 use crate::utils::Coordinates;
 #[derive(Debug, Clone)]
 pub struct BoardConfig {
     pub height: usize,
     pub width: usize,
-    pub char_width: i32,
+    pub char_width: u32,
     pub border_top_right_symbol: &'static str,
     pub border_top_left_symbol: &'static str,
     pub border_bottom_right_symbol: &'static str,
@@ -25,7 +25,7 @@ impl BoardConfig {
     pub fn new(
         height: usize,
         width: usize,
-        char_width: i32,
+        char_width: u32,
         border_top_right_symbol: &'static str,
         border_top_left_symbol: &'static str,
         border_bottom_right_symbol: &'static str,
@@ -85,27 +85,19 @@ impl fmt::Display for BoardError {
     }
 }
 
-impl fmt::Debug for BoardError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            BoardError::CoordinatesOutOffRange => write!(f, "coordinates out off range"),
-        }
-    }
-}
-
-pub trait Field<T> {
+pub trait Field<T: Clone + Copy, E: std::error::Error> {
     fn set_field(
-        set_values: &Vec<(Vec<Coordinates>, T),
+        set_values: &[(Coordinates, T)],
         width: usize,
         height: usize,
         default_value: T,
     ) -> Result<Vec<Vec<T>>, BoardError> {
-        let mut field = vec![vec![defualt_value; width]; height];
+        let mut field = vec![vec![default_value; width]; height];
         for (pos, value) in set_values {
             if pos.x >= width || pos.y >= height {
                 return Err(BoardError::CoordinatesOutOffRange);
             }
-            field[y][x] = value;
+            field[pos.y][pos.x] = *value;
         }
         Ok(field)
     }
@@ -114,7 +106,7 @@ pub trait Field<T> {
     fn get_height(&self) -> &usize;
     fn get_field(&self) -> &Vec<Vec<T>>;
     fn get_count(&self) -> &usize;
-    fn get(&self, pos: &Coordinates) -> &T;
+    fn get(&self, pos: &Coordinates) -> Result<&T, E>;
 }
 
 pub trait AddField {
@@ -132,12 +124,14 @@ pub struct LandmineField {
 
 impl LandmineField {
     pub fn new(
-        landmine_positions: &Vec<Coordinates>,
+        landmine_positions: &[Coordinates],
         width: usize,
         height: usize,
     ) -> Result<LandmineField, BoardError> {
         let count = landmine_positions.len();
-        let field = LandmineField::set_field(landmine_positions.into_iter().map(|pos| (pos, false)).collect(), width, height, false)?;
+        let set_values: Vec<(Coordinates, bool)> =
+            landmine_positions.iter().map(|pos| (*pos, true)).collect();
+        let field = LandmineField::set_field(&set_values, width, height, false)?;
         let symbol = "💣";
         Ok(LandmineField {
             width,
@@ -149,7 +143,7 @@ impl LandmineField {
     }
 }
 
-impl Field<bool> for LandmineField {
+impl Field<bool, BoardError> for LandmineField {
     fn get_width(&self) -> &usize {
         &self.width
     }
@@ -166,8 +160,12 @@ impl Field<bool> for LandmineField {
         &self.count
     }
 
-    fn get(&self, pos: &Coordinates) -> &bool {
-        &self.field[pos.x][pos.y]
+    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            Err(BoardError::CoordinatesOutOffRange)
+        } else {
+            Ok(&self.field[pos.y][pos.x])
+        }
     }
 }
 
@@ -192,7 +190,7 @@ pub struct FlagsField {
 impl FlagsField {
     pub fn new(width: usize, height: usize) -> Result<FlagsField, BoardError> {
         let count = 0;
-        let nothin = vec![];
+        let nothing = vec![];
         let field = FlagsField::set_field(&nothing, width, height, false)?;
         let symbol = "🚩";
         Ok(FlagsField {
@@ -205,7 +203,7 @@ impl FlagsField {
     }
 }
 
-impl Field<bool> for FlagsField {
+impl Field<bool, BoardError> for FlagsField {
     fn get_width(&self) -> &usize {
         &self.width
     }
@@ -222,8 +220,12 @@ impl Field<bool> for FlagsField {
         &self.field
     }
 
-    fn get(&self, pos: &Coordinates) -> &bool {
-        &self.field[pos.x][pos.y]
+    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            Err(BoardError::CoordinatesOutOffRange)
+        } else {
+            Ok(&self.field[pos.y][pos.x])
+        }
     }
 }
 
@@ -252,7 +254,7 @@ pub struct OpenedField {
 impl OpenedField {
     pub fn new(width: usize, height: usize) -> Result<OpenedField, BoardError> {
         let count = 0;
-        let nothing: = vec![];
+        let nothing: Vec<(Coordinates, bool)> = vec![];
         let field = FlagsField::set_field(&nothing, width, height, false)?;
         let symbol_open = "░░";
         let symbol_closed = "██";
@@ -267,7 +269,7 @@ impl OpenedField {
     }
 }
 
-impl Field<bool> for OpenedField {
+impl Field<bool, BoardError> for OpenedField {
     fn get_width(&self) -> &usize {
         &self.width
     }
@@ -284,8 +286,12 @@ impl Field<bool> for OpenedField {
         &self.field
     }
 
-    fn get(&self, pos: &Coordinates) -> &bool {
-        &self.field[pos.y][pos.x]
+    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            Err(BoardError::CoordinatesOutOffRange)
+        } else {
+            Ok(&self.field[pos.y][pos.x])
+        }
     }
 }
 
@@ -310,81 +316,83 @@ pub struct NumberField {
 }
 
 impl NumberField {
-    pub fn new(width: usize, height: usize, landmines: &LandmineField) -> Self {
-        let field = NumberField::calculate_numbers(width, height, landmines);
-        let count = Self::count(&field);
-        NumberField {
+    pub fn new(width: usize, height: usize, landmines: &LandmineField) -> Result<Self, BoardError> {
+        let field = NumberField::calculate_numbers(width, height, landmines)?;
+        let count = Self::get_count(&field);
+        Ok(NumberField {
             width,
             height,
-            field: vec![vec![]],
+            field,
             symbol: "░",
             count,
-        }
+        })
     }
 
-
-    fn calculate_numbers(width: usize, height: usize, landmines: &LandmineField) -> Vec<Vec<i32>> {
-        let set_values = vec![];
+    fn calculate_numbers(
+        width: usize,
+        height: usize,
+        landmines: &LandmineField,
+    ) -> Result<Vec<Vec<i32>>, BoardError> {
+        let mut set_values = vec![];
         for i in 0..width as usize {
             for j in 0..height as usize {
                 let mut count = 0;
-                if i - 1 >= 0 && j - 1 >= 0 && i - 1 < width && j - 1 < height {
-                    if landmines.get(&Coordinates {x: i - 1, y: j - 1}) {
+                if i >= 1 && j >= 1 && i - 1 < width && j - 1 < height {
+                    if *landmines.get(&Coordinates { x: i - 1, y: j - 1 })? {
                         count += 1;
                     }
                 }
 
-                if i - 1 >= 0 && i - 1 < width {
-                    if landmines.get(&Coordinates {x: i - 1, y: j}) {
+                if i >= 1 && i - 1 < width {
+                    if *landmines.get(&Coordinates { x: i - 1, y: j })? {
                         count += 1;
                     }
                 }
-                
-                if i - 1 >= 0 && j + 1 >= 0 && i - 1 < width && j + 1 < height {
-                    if landmines.get(&Coordinates {x: i - 1, y: j + 1}) {
+
+                if i >= 1 && i - 1 < width && j + 1 < height {
+                    if *landmines.get(&Coordinates { x: i - 1, y: j + 1 })? {
                         count += 1;
                     }
                 }
-                
-                if j - 1 >= 0 && j - 1 < height {
-                    if landmines.get(&Coordinates {x: i , y: j - 1}) {
+
+                if j >= 1 && j - 1 < height {
+                    if *landmines.get(&Coordinates { x: i, y: j - 1 })? {
                         count += 1;
                     }
                 }
-                
-                if j + 1 >= 0 && j + 1 < height {
-                    if landmines.get(&Coordinates {x: i, y: j + 1}) {
+
+                if j + 1 < height {
+                    if *landmines.get(&Coordinates { x: i, y: j + 1 })? {
                         count += 1;
                     }
                 }
-                
-                if i + 1 >= 0 && i + 1 < width && j - 1 >= 0 && j - 1 < height{
-                    if landmines.get(&Coordinates {x: i + 1, y: j - 1}) {
+
+                if i + 1 < width && j >= 1 && j - 1 < height {
+                    if *landmines.get(&Coordinates { x: i + 1, y: j - 1 })? {
                         count += 1;
                     }
                 }
-                
-                if i + 1 >= 0 && i + 1 < width {
-                    if landmines.get(&Coordinates {x: i + 1, y: j}) {
+
+                if i + 1 < width {
+                    if *landmines.get(&Coordinates { x: i + 1, y: j })? {
                         count += 1;
                     }
                 }
-                
-                if i + 1 >= 0 && i + 1 < width && j + 1 >= 0 && j + 1 < height {
-                    if landmines.get(&Coordinates {x: i + 1, y: j + 1}) {
+
+                if i + 1 < width && j + 1 < height {
+                    if *landmines.get(&Coordinates { x: i + 1, y: j + 1 })? {
                         count += 1;
                     }
                 }
-                
-                set_values.push((Coordinates {x: i, y: j}, count));
+
+                set_values.push((Coordinates { x: i, y: j }, count));
             }
-
         }
-        let mut field = numberfield::set_field(set_values, width, height, 0);
-        field
+        let field = NumberField::set_field(&set_values, width, height, 0)?;
+        Ok(field)
     }
 
-    fn count(field: &Vec<Vec<i32>>) -> usize {
+    fn get_count(field: &Vec<Vec<i32>>) -> usize {
         let mut count: usize = 0;
         for row in field {
             for n in row {
@@ -395,10 +403,9 @@ impl NumberField {
         }
         count
     }
-    
 }
 
-impl Field<i32> for NumberField {
+impl Field<i32, BoardError> for NumberField {
     fn get_count(&self) -> &usize {
         &self.count
     }
@@ -415,28 +422,32 @@ impl Field<i32> for NumberField {
         &self.width
     }
 
-    fn get(&self, pos: &Coordinates) -> &i32 {
-        &self.field[pos.y][pos.x]
+    fn get(&self, pos: &Coordinates) -> Result<&i32, BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            Err(BoardError::CoordinatesOutOffRange)
+        } else {
+            Ok(&self.field[pos.y][pos.x])
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Board<'a> {
+pub struct Board {
     config: BoardConfig,
     landmines: LandmineField,
     flags: FlagsField,
     opened: OpenedField,
     numbers: NumberField,
-    framebuffer: Vec<Vec<&'a str>>,
+    framebuffer: Vec<Vec<String>>,
 }
 
-impl<'a> Board<'a> {
-    pub fn new(config: BoardConfig, landmine_pos: &Vec<Coordinates>) -> Result<Board, BoardError> {
+impl Board {
+    pub fn new<'b>(config: BoardConfig, landmine_pos: &'b [Coordinates]) -> Result<Board, BoardError> {
         let landmines = LandmineField::new(landmine_pos, config.width, config.height)?;
         let flags = FlagsField::new(config.width, config.height)?;
         let opened = OpenedField::new(config.width, config.height)?;
-        let framebuffer = vec![vec![""; config.width + 2]; config.height + 2];
-        let numbers = NumberField::new(config.width, config.height, &landmines);
+        let framebuffer = vec![vec![String::new(); config.width + 2]; config.height + 3];
+        let numbers = NumberField::new(config.width, config.height, &landmines)?;
         Ok(Board {
             config,
             landmines,
@@ -448,7 +459,7 @@ impl<'a> Board<'a> {
     }
 
     pub fn landmine_count(&self) -> &usize {
-        self.landmines.count();
+        self.landmines.get_count()
     }
 
     pub fn get_config(&self) -> &BoardConfig {
@@ -457,51 +468,52 @@ impl<'a> Board<'a> {
 
     pub fn draw_border(&mut self) {
         // Top
-        self.framebuffer[0][0] = self.config.border_top_left_symbol;
+        self.framebuffer[0][0] = self.config.border_top_left_symbol.to_string();
         for i in 1..self.config.width + 1 {
-            self.framebuffer[0][i] = self.config.border_top;
+            self.framebuffer[0][i] = self.config.border_top.to_string();
         }
-        self.framebuffer[0][self.config.width + 1] = self.config.border_top_right_symbol;
+        self.framebuffer[0][self.config.width + 1] = self.config.border_top_right_symbol.to_string();
 
         // Side
         for j in 1..self.config.height + 1 {
-            self.framebuffer[j][0] = self.config.border_left;
-            self.framebuffer[j][self.config.width + 1] = self.config.border_right;
+            self.framebuffer[j][0] = self.config.border_left.to_string();
+            self.framebuffer[j][self.config.width + 1] = self.config.border_right.to_string();
         }
 
         // Bottom
-        self.framebuffer[self.config.height + 1][0] = self.config.border_bottom_left_symbol;
+        self.framebuffer[self.config.height + 1][0] = self.config.border_bottom_left_symbol.to_string();
         for i in 1..self.config.width + 1 {
-            self.framebuffer[self.config.height + 1][i] = self.config.border_bottom;
+            self.framebuffer[self.config.height + 1][i] = self.config.border_bottom.to_string();
         }
         self.framebuffer[self.config.height + 1][self.config.width + 1] =
-            self.config.border_bottom_right_symbol;
+            self.config.border_bottom_right_symbol.to_string();
     }
 
-    pub fn draw_field(&mut self) {
+    pub fn draw_field(&mut self) -> Result<(), BoardError>{
         for i in 0..self.config.width {
             for j in 0..self.config.height {
                 let pos = Coordinates::new(i, j);
-                self.framebuffer[j + 1][i + 1] = if self.opened.get(&pos) {
-                    if self.flags.get(&pos) {
-                        self.flags.symbol
-                    } else if self.numbers.get(&pos) > 0 {
-                        self.numbers.symbol
-                    } else if self.landmines.get(&pos) {
-                        self.landmines.symbol
+                self.framebuffer[j + 1][i + 1] = if *self.opened.get(&pos)? {
+                    if *self.flags.get(&pos)? {
+                        self.flags.symbol.to_string()
+                    } else if *self.numbers.get(&pos)? > 0 {
+                        format!("{}{}", self.numbers.field[j][i], self.numbers.symbol)
+                    } else if *self.landmines.get(&pos)? {
+                        self.landmines.symbol.to_string()
                     } else {
-                        self.opened.symbol_open
+                        self.opened.symbol_open.to_string()
                     }
                 } else {
-                    self.opened.symbol_closed
+                    self.opened.symbol_closed.to_string()
                 }
             }
         }
+        Ok(())
     }
 
     pub fn print(&mut self) {
         let mut f = std::io::stdout();
-        self.draw_field();
+        self.draw_field().unwrap();
         execute!(f, Print(self)).unwrap();
     }
 
@@ -516,15 +528,14 @@ impl<'a> Board<'a> {
     }
 }
 
-impl<'a> std::fmt::Display for Board<'a> {
+impl<'a> std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (i, row) in self.framebuffer.iter().enumerate() {
             for (j, symbol) in row.iter().enumerate() {
                 if symbol.len() == 1 && self.config.char_width == 2 {
                     write!(
                         f,
-                        "{}{}",
-                        self.numbers.get(&Coordinates { x: i, y: j }),
+                        "1{}",
                         self.numbers.symbol
                     )?;
                 } else {
@@ -538,19 +549,21 @@ impl<'a> std::fmt::Display for Board<'a> {
 }
 
 pub fn test1() -> Result<(), BoardError> {
-    let config = BoardConfig::unicode(12, 10, Color::Reset);
+    let config = BoardConfig::unicode(10, 10, Color::Reset);
     let mine = vec![Coordinates { x: 1, y: 2 }];
     let mut board = Board::new(config, &mine)?;
+
     board.add_flag(&Coordinates { x: 1, y: 2 })?;
     board.click(&Coordinates { x: 1, y: 2 })?;
     board.click(&Coordinates { x: 1, y: 1 })?;
     board.draw_border();
     board.print();
+    println!();
+    println!("{:#?}", board.numbers);
     Ok(())
 }
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
+    
 }
