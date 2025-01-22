@@ -6,3 +6,8 @@ edition = "2021"
 [dependencies]
 crossterm = "0.28.1"
 rand = "0.8.5"
+
+[features]
+bracketed-paste = []
+
+default = ["bracketed-paste"]

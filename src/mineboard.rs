@@ -1,8 +1,8 @@
 use crossterm::execute;
 use crossterm::style::{Color, Print};
+use crossterm::terminal::{Clear, ClearType};
 use std::error::Error;
 use std::fmt;
-use std::io::Write;
 
 use crate::utils::Coordinates;
 #[derive(Debug, Clone)]
@@ -109,8 +109,9 @@ pub trait Field<T: Clone + Copy, E: std::error::Error> {
     fn get(&self, pos: &Coordinates) -> Result<&T, E>;
 }
 
-pub trait AddField {
+pub trait ChangeableField {
     fn add(&mut self, pos: &Coordinates) -> Result<(), BoardError>;
+    fn remove(&mut self, pos: &Coordinates) -> Result<(), BoardError>;
 }
 
 #[derive(Debug, Clone)]
@@ -229,14 +230,24 @@ impl Field<bool, BoardError> for FlagsField {
     }
 }
 
-impl AddField for FlagsField {
+impl ChangeableField for FlagsField {
     fn add(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             return Err(BoardError::CoordinatesOutOffRange);
         }
 
         self.count += 1;
-        self.field[pos.x][pos.y] = true;
+        self.field[pos.y][pos.x] = true;
+        Ok(())
+    }
+
+    fn remove(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            return Err(BoardError::CoordinatesOutOffRange);
+        }
+
+        self.count += 1;
+        self.field[pos.y][pos.x] = false;
         Ok(())
     }
 }
@@ -256,7 +267,7 @@ impl OpenedField {
         let count = 0;
         let nothing: Vec<(Coordinates, bool)> = vec![];
         let field = FlagsField::set_field(&nothing, width, height, false)?;
-        let symbol_open = "░░";
+        let symbol_open = "  ";
         let symbol_closed = "██";
         Ok(OpenedField {
             width,
@@ -295,7 +306,7 @@ impl Field<bool, BoardError> for OpenedField {
     }
 }
 
-impl AddField for OpenedField {
+impl ChangeableField for OpenedField {
     fn add(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             return Err(BoardError::CoordinatesOutOffRange);
@@ -305,7 +316,18 @@ impl AddField for OpenedField {
         self.field[pos.y][pos.x] = true;
         Ok(())
     }
+
+    fn remove(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
+        if pos.x >= self.width || pos.y >= self.height {
+            return Err(BoardError::CoordinatesOutOffRange);
+        }
+
+        self.count += 1;
+        self.field[pos.y][pos.x] = false;
+        Ok(())
+    }
 }
+
 #[derive(Debug, Clone)]
 pub struct NumberField {
     width: usize,
@@ -323,7 +345,7 @@ impl NumberField {
             width,
             height,
             field,
-            symbol: "░",
+            symbol: " ",
             count,
         })
     }
@@ -442,7 +464,10 @@ pub struct Board {
 }
 
 impl Board {
-    pub fn new<'b>(config: BoardConfig, landmine_pos: &'b [Coordinates]) -> Result<Board, BoardError> {
+    pub fn new<'b>(
+        config: BoardConfig,
+        landmine_pos: &'b [Coordinates],
+    ) -> Result<Board, BoardError> {
         let landmines = LandmineField::new(landmine_pos, config.width, config.height)?;
         let flags = FlagsField::new(config.width, config.height)?;
         let opened = OpenedField::new(config.width, config.height)?;
@@ -472,7 +497,8 @@ impl Board {
         for i in 1..self.config.width + 1 {
             self.framebuffer[0][i] = self.config.border_top.to_string();
         }
-        self.framebuffer[0][self.config.width + 1] = self.config.border_top_right_symbol.to_string();
+        self.framebuffer[0][self.config.width + 1] =
+            self.config.border_top_right_symbol.to_string();
 
         // Side
         for j in 1..self.config.height + 1 {
@@ -481,7 +507,8 @@ impl Board {
         }
 
         // Bottom
-        self.framebuffer[self.config.height + 1][0] = self.config.border_bottom_left_symbol.to_string();
+        self.framebuffer[self.config.height + 1][0] =
+            self.config.border_bottom_left_symbol.to_string();
         for i in 1..self.config.width + 1 {
             self.framebuffer[self.config.height + 1][i] = self.config.border_bottom.to_string();
         }
@@ -489,17 +516,17 @@ impl Board {
             self.config.border_bottom_right_symbol.to_string();
     }
 
-    pub fn draw_field(&mut self) -> Result<(), BoardError>{
+    pub fn draw_field(&mut self) -> Result<(), BoardError> {
         for i in 0..self.config.width {
             for j in 0..self.config.height {
                 let pos = Coordinates::new(i, j);
-                self.framebuffer[j + 1][i + 1] = if *self.opened.get(&pos)? {
-                    if *self.flags.get(&pos)? {
-                        self.flags.symbol.to_string()
+                self.framebuffer[j + 1][i + 1] = if *self.flags.get(&pos)? {
+                    self.flags.symbol.to_string()
+                } else if *self.opened.get(&pos)? {
+                    if *self.landmines.get(&pos)? {
+                        self.landmines.symbol.to_string() 
                     } else if *self.numbers.get(&pos)? > 0 {
-                        format!("{}{}", self.numbers.field[j][i], self.numbers.symbol)
-                    } else if *self.landmines.get(&pos)? {
-                        self.landmines.symbol.to_string()
+                        format!("{}{}", self.numbers.get(&pos)?, self.numbers.symbol)
                     } else {
                         self.opened.symbol_open.to_string()
                     }
@@ -522,8 +549,18 @@ impl Board {
         Ok(())
     }
 
+    pub fn remove_flag(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
+        self.flags.remove(pos)?;
+        Ok(())
+    }
+
     pub fn click(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
         self.opened.add(pos)?;
+        Ok(())
+    }
+
+    pub fn unclick(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
+        self.opened.remove(pos)?;
         Ok(())
     }
 }
@@ -533,11 +570,7 @@ impl<'a> std::fmt::Display for Board {
         for (i, row) in self.framebuffer.iter().enumerate() {
             for (j, symbol) in row.iter().enumerate() {
                 if symbol.len() == 1 && self.config.char_width == 2 {
-                    write!(
-                        f,
-                        "1{}",
-                        self.numbers.symbol
-                    )?;
+                    write!(f, "1{}", self.numbers.symbol)?;
                 } else {
                     write!(f, "{}", symbol)?;
                 }
@@ -559,11 +592,8 @@ pub fn test1() -> Result<(), BoardError> {
     board.draw_border();
     board.print();
     println!();
-    println!("{:#?}", board.numbers);
     Ok(())
 }
 
 #[cfg(test)]
-mod test {
-    
-}
+mod test {}
