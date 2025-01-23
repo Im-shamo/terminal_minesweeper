@@ -5,6 +5,14 @@ use std::error::Error;
 use std::fmt;
 
 use crate::utils::Coordinates;
+
+#[derive(Debug, Clone)]
+pub enum ItemType {
+    Nothing,
+    Landmine,
+    Number(i32),
+}
+
 #[derive(Debug, Clone)]
 pub struct BoardConfig {
     pub height: usize,
@@ -554,6 +562,10 @@ impl Board {
         Ok(())
     }
 
+    pub fn have_flag(&self, pos: &Coordinates) -> Result<bool, BoardError> {
+        self.flags.get(pos)?
+    }
+
     pub fn click(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
         self.opened.add(pos)?;
         Ok(())
@@ -562,6 +574,16 @@ impl Board {
     pub fn unclick(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
         self.opened.remove(pos)?;
         Ok(())
+    }
+
+    pub fn get(&self, &pos) -> Result<ItemType, BoardError> {
+        if self.board.landmines.get(pos)? {
+            Ok(ItemType::Landmine)
+        } else if self.board.numbers.get(pos)? {
+            Ok(ItemType::Number(self.board.number.get(pos)?))
+        } else {
+            Ok(ItemType::Nothing)
+        }
     }
 }
 
