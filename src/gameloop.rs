@@ -1,8 +1,10 @@
 #![cfg(feature = "bracketed-paste")]
 use crate::mineboard::{Board, BoardConfig, BoardError, ItemType};
 use crate::utils::Coordinates;
-use crossterm::cursor;
-use crossterm::event::{MouseEventKind, MouseButton, KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
+use crossterm::cursor::{self, EnableBlinking};
+use crossterm::event::{
+    KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode, MouseButton, MouseEvent, MouseEventKind,
+};
 use crossterm::style::Color;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 use crossterm::{
@@ -15,6 +17,7 @@ use crossterm::{
 
 use rand::prelude::*;
 use std::io::{stdout, Cursor};
+use std::ops::ControlFlow;
 
 #[derive(Clone, Debug)]
 pub enum GameState {
@@ -51,7 +54,9 @@ impl Game {
 
     pub fn game_loop(&mut self) {
         enable_raw_mode().unwrap();
+
         let mut stdout = stdout();
+        execute!(stdout, EnableMouseCapture, EnableBlinking).unwrap();
         execute!(stdout, cursor::Show).unwrap();
         self.rander();
         execute!(stdout, cursor::MoveTo(2, 1)).unwrap();
@@ -63,7 +68,7 @@ impl Game {
                 GameState::Playing => {}
             }
         }
-        execute!(stdout, Clear(ClearType::All)).unwrap();
+        execute!(stdout, Clear(ClearType::All), DisableMouseCapture).unwrap();
         disable_raw_mode().unwrap();
     }
 
@@ -105,78 +110,115 @@ impl Game {
         self.board.landmine_count()
     }
 
-    fn get_cursor_location_in_board(&self) -> Option<Coordinates> {
-        Some(Coordinates { x: 1, y: 1 })
-    }
-
     fn get_input(&self) -> std::io::Result<Event> {
         let key_event = read()?;
         Ok(key_event)
     }
 
     fn get_and_proccess_input(&mut self) {
+        let mut stdout = stdout();
         loop {
-            let event = self.get_input().unwrap();
-            let key_event = match event {
-                Event::Key(event) => event,
-                _ => continue,
-            };
-            if let Event::Key(key_event) = event {
-                if key_event.modifiers == KeyModifiers::NONE {
-                    match key_event.code {
-                        KeyCode::Up | KeyCode::Char('w') | KeyCode::Char('W') => self.update_cursor_location(Direction::Up),
-                        KeyCode::Down | KeyCode::Char('s') | KeyCode::Char('S')=> self.update_cursor_location(Direction::Down),
-                        KeyCode::Right | KeyCode::Char('d') | KeyCode::Char('D')=> self.update_cursor_location(Direction::Right),
-                        KeyCode::Left | KeyCode::Char('a') | KeyCode::Char('A')=> self.update_cursor_location(Direction::Left),
-                        KeyCode::Char('f') | KeyCode::Char('F') => {
-                            if let Some(pos) = self.get_coordinates_from_cursor() {
-                                if self.board.have_flag(&pos).unwrap() {
-                                    self.board.remove_flag(&pos).unwrap();
-                                }
-                                self.board.add_flag(&pos).unwrap();
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if let Some(pos) = self.get_coordinates_from_cursor() {
-                                if self.board.get(&pos) == ItemType.Landmine {
-                                    self.state = GameState::HitMine;
-                                }
-                                self.board.click(&pos).unwrap();
-                            }
-                        }
-                        KeyCode::Char('q') | KeyCode::Char('Q') => self.state = GameState::Quit,
-                        _ => continue,
-                    }
-                } else if let Event::MouseEvent(mouse_event) = event {
-                    if let Some(pos) = get_coordinates_from_mouse(&mouse_event) {
-                        if let Down(b) = mouse_event {
-                            match b {
-                                MouseButton::Right => {
-                                    if self.board.have_flag(&pos).unwrap() {
-                                        self.board.remove_flag(&pos).unwrap();
-                                    } else {
-                                        self.board.add_flag(&pos).unwrap();
-                                    }
-                                }
-                                MouseButton::Left => {
-                                    if self.board.get(&pos) = ItemType::Landmine{
-                                        self.GameState::HitMine;
-                                    }
-                                    self.board.click(&pos).unwrap();
-                                }
-                                _ => continue,
-                            }
-                        }
-                    }
+            match self.get_input().unwrap() {
+                Event::Mouse(mouse_event) => {
+                    self.process_mouse(&mut stdout, mouse_event);
+                    break;
                 }
+                Event::Key(key_event) => {
+                    self.process_key(&mut stdout, key_event);
+                    break;
+                }
+                _ => (),
             }
-            break;
         }
     }
 
-    fn update_cursor_location(&self, dir: Direction) {
+    fn process_key(&mut self, stdout: &mut std::io::Stdout, key_event: KeyEvent) {
+        if key_event.modifiers != KeyModifiers::NONE {
+            return;
+        }
+
+        let pos = match key_event.code {
+            KeyCode::Char('W') | KeyCode::Char('w') | KeyCode::Up => {
+                self.update_cursor_location(stdout, Direction::Up);
+                return;
+            }
+            KeyCode::Char('S') | KeyCode::Char('s') | KeyCode::Down => {
+                self.update_cursor_location(stdout, Direction::Down);
+                return;
+            }
+            KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Right => {
+                self.update_cursor_location(stdout, Direction::Right);
+                return;
+            }
+            KeyCode::Char('A') | KeyCode::Char('a') | KeyCode::Left => {
+                self.update_cursor_location(stdout, Direction::Left);
+                return;
+            }
+            KeyCode::Char('Q') | KeyCode::Char('q') => {
+                self.state = GameState::Quit;
+                return;
+            }
+            _ => match self.get_coordinates_from_cursor() {
+                Some(p) => p,
+                _ => return,
+            },
+        };
+
+        match key_event.code {
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                self.click(&pos);
+                return;
+            }
+            KeyCode::Char('F') | KeyCode::Char('f') => {
+                self.click_flag(&pos);
+                return;
+            }
+            _ => return,
+        }
+    }
+
+    fn process_mouse(&mut self, stdout: &mut std::io::Stdout, mouse_event: MouseEvent) {
+        let mut x = mouse_event.column;
+        if x % 2 == 1 {
+            x += 1;
+        }
+        let y = mouse_event.row;
+        execute!(stdout, cursor::MoveTo(x, y)).unwrap();
+
+        let pos = match self.get_coordinates_from_cursor() {
+            Some(pos) => pos,
+            None => return,
+        };
+
+        let button_pressed = match mouse_event.kind {
+            MouseEventKind::Down(b) => b,
+            _ => return,
+        };
+
+        match button_pressed {
+            MouseButton::Left => self.click(&pos),
+            MouseButton::Right => self.click_flag(&pos),
+            _ => return,
+        }
+    }
+
+    fn click_flag(&mut self, pos: &Coordinates) {
+        if self.board.have_flag(pos).unwrap() {
+            self.board.remove_flag(pos).unwrap();
+        } else {
+            self.board.add_flag(pos).unwrap();
+        }
+    }
+
+    fn click(&mut self, pos: &Coordinates) {
+        if self.board.get(pos).unwrap() == ItemType::Landmine {
+            self.state = GameState::HitMine;
+        }
+        self.board.click(pos).unwrap();
+    }
+
+    fn update_cursor_location(&self, stdout: &mut std::io::Stdout, dir: Direction) {
         let size = self.board.get_config().char_width as u16;
-        let mut stdout = stdout();
         match dir {
             Direction::Up => execute!(stdout, cursor::MoveUp(1)).unwrap(),
             Direction::Down => execute!(stdout, cursor::MoveDown(1)).unwrap(),
@@ -191,26 +233,35 @@ impl Game {
     }
 
     fn terminal_pos_to_coordinates(&self, x: u16, y: u16) -> Option<Coordinates> {
+        let config = self.board.get_config();
+        let x = x as usize;
+        let y = y as usize;
         if x < 2 || y < 1 {
             None
         } else {
-            Some(Coordinates{x: x as u32 / 2 - 1, y: y as u32 - 1})
+            let x = x / 2 - 1;
+            let y = y - 1;
+            if x >= config.width || y >= config.height {
+                None
+            } else {
+                Some(Coordinates { x, y })
+            }
         }
     }
 
     pub fn get_coordinates_from_cursor(&self) -> Option<Coordinates> {
         let (x, y) = cursor::position().unwrap();
 
-        terminal_pos_to_coordinates(x, y)
+        self.terminal_pos_to_coordinates(x, y)
     }
 
-    pub fn get_coordinates_from_mouse(&self, mouse_event: &MouseEvent) -> Option<Coordinates>{
-        terminal_pos_to_coordinates(mouse_event.row, mouse_event.column)
+    pub fn get_coordinates_from_mouse(&self, mouse_event: &MouseEvent) -> Option<Coordinates> {
+        self.terminal_pos_to_coordinates(mouse_event.row, mouse_event.column)
     }
 }
 
 pub fn test1() {
-    let board_config = BoardConfig::unicode(7, 7, Color::Reset);
-    let mut game = Game::new(board_config,4).unwrap();
+    let board_config = BoardConfig::unicode(20, 20, Color::Reset);
+    let mut game = Game::new(board_config, 4).unwrap();
     game.game_loop();
 }

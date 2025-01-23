@@ -6,7 +6,7 @@ use std::fmt;
 
 use crate::utils::Coordinates;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ItemType {
     Nothing,
     Landmine,
@@ -114,7 +114,7 @@ pub trait Field<T: Clone + Copy, E: std::error::Error> {
     fn get_height(&self) -> &usize;
     fn get_field(&self) -> &Vec<Vec<T>>;
     fn get_count(&self) -> &usize;
-    fn get(&self, pos: &Coordinates) -> Result<&T, E>;
+    fn get(&self, pos: &Coordinates) -> Result<T, E>;
 }
 
 pub trait ChangeableField {
@@ -169,11 +169,11 @@ impl Field<bool, BoardError> for LandmineField {
         &self.count
     }
 
-    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+    fn get(&self, pos: &Coordinates) -> Result<bool, BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             Err(BoardError::CoordinatesOutOffRange)
         } else {
-            Ok(&self.field[pos.y][pos.x])
+            Ok(self.field[pos.y][pos.x])
         }
     }
 }
@@ -229,11 +229,11 @@ impl Field<bool, BoardError> for FlagsField {
         &self.field
     }
 
-    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+    fn get(&self, pos: &Coordinates) -> Result<bool, BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             Err(BoardError::CoordinatesOutOffRange)
         } else {
-            Ok(&self.field[pos.y][pos.x])
+            Ok(self.field[pos.y][pos.x])
         }
     }
 }
@@ -305,11 +305,11 @@ impl Field<bool, BoardError> for OpenedField {
         &self.field
     }
 
-    fn get(&self, pos: &Coordinates) -> Result<&bool, BoardError> {
+    fn get(&self, pos: &Coordinates) -> Result<bool, BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             Err(BoardError::CoordinatesOutOffRange)
         } else {
-            Ok(&self.field[pos.y][pos.x])
+            Ok(self.field[pos.y][pos.x])
         }
     }
 }
@@ -368,49 +368,49 @@ impl NumberField {
             for j in 0..height as usize {
                 let mut count = 0;
                 if i >= 1 && j >= 1 && i - 1 < width && j - 1 < height {
-                    if *landmines.get(&Coordinates { x: i - 1, y: j - 1 })? {
+                    if landmines.get(&Coordinates { x: i - 1, y: j - 1 })? {
                         count += 1;
                     }
                 }
 
                 if i >= 1 && i - 1 < width {
-                    if *landmines.get(&Coordinates { x: i - 1, y: j })? {
+                    if landmines.get(&Coordinates { x: i - 1, y: j })? {
                         count += 1;
                     }
                 }
 
                 if i >= 1 && i - 1 < width && j + 1 < height {
-                    if *landmines.get(&Coordinates { x: i - 1, y: j + 1 })? {
+                    if landmines.get(&Coordinates { x: i - 1, y: j + 1 })? {
                         count += 1;
                     }
                 }
 
                 if j >= 1 && j - 1 < height {
-                    if *landmines.get(&Coordinates { x: i, y: j - 1 })? {
+                    if landmines.get(&Coordinates { x: i, y: j - 1 })? {
                         count += 1;
                     }
                 }
 
                 if j + 1 < height {
-                    if *landmines.get(&Coordinates { x: i, y: j + 1 })? {
+                    if landmines.get(&Coordinates { x: i, y: j + 1 })? {
                         count += 1;
                     }
                 }
 
                 if i + 1 < width && j >= 1 && j - 1 < height {
-                    if *landmines.get(&Coordinates { x: i + 1, y: j - 1 })? {
+                    if landmines.get(&Coordinates { x: i + 1, y: j - 1 })? {
                         count += 1;
                     }
                 }
 
                 if i + 1 < width {
-                    if *landmines.get(&Coordinates { x: i + 1, y: j })? {
+                    if landmines.get(&Coordinates { x: i + 1, y: j })? {
                         count += 1;
                     }
                 }
 
                 if i + 1 < width && j + 1 < height {
-                    if *landmines.get(&Coordinates { x: i + 1, y: j + 1 })? {
+                    if landmines.get(&Coordinates { x: i + 1, y: j + 1 })? {
                         count += 1;
                     }
                 }
@@ -426,7 +426,7 @@ impl NumberField {
         let mut count: usize = 0;
         for row in field {
             for n in row {
-                if *n > 0 {
+                if *n > 1 {
                     count += 1;
                 }
             }
@@ -452,11 +452,11 @@ impl Field<i32, BoardError> for NumberField {
         &self.width
     }
 
-    fn get(&self, pos: &Coordinates) -> Result<&i32, BoardError> {
+    fn get(&self, pos: &Coordinates) -> Result<i32, BoardError> {
         if pos.x >= self.width || pos.y >= self.height {
             Err(BoardError::CoordinatesOutOffRange)
         } else {
-            Ok(&self.field[pos.y][pos.x])
+            Ok(self.field[pos.y][pos.x])
         }
     }
 }
@@ -528,12 +528,12 @@ impl Board {
         for i in 0..self.config.width {
             for j in 0..self.config.height {
                 let pos = Coordinates::new(i, j);
-                self.framebuffer[j + 1][i + 1] = if *self.flags.get(&pos)? {
+                self.framebuffer[j + 1][i + 1] = if self.flags.get(&pos)? {
                     self.flags.symbol.to_string()
-                } else if *self.opened.get(&pos)? {
-                    if *self.landmines.get(&pos)? {
-                        self.landmines.symbol.to_string() 
-                    } else if *self.numbers.get(&pos)? > 0 {
+                } else if self.opened.get(&pos)? {
+                    if self.landmines.get(&pos)? {
+                        self.landmines.symbol.to_string()
+                    } else if self.numbers.get(&pos)? > 0 {
                         format!("{}{}", self.numbers.get(&pos)?, self.numbers.symbol)
                     } else {
                         self.opened.symbol_open.to_string()
@@ -563,7 +563,7 @@ impl Board {
     }
 
     pub fn have_flag(&self, pos: &Coordinates) -> Result<bool, BoardError> {
-        self.flags.get(pos)?
+        self.flags.get(pos)
     }
 
     pub fn click(&mut self, pos: &Coordinates) -> Result<(), BoardError> {
@@ -576,11 +576,11 @@ impl Board {
         Ok(())
     }
 
-    pub fn get(&self, &pos) -> Result<ItemType, BoardError> {
-        if self.board.landmines.get(pos)? {
+    pub fn get(&self, pos: &Coordinates) -> Result<ItemType, BoardError> {
+        if self.landmines.get(pos)? {
             Ok(ItemType::Landmine)
-        } else if self.board.numbers.get(pos)? {
-            Ok(ItemType::Number(self.board.number.get(pos)?))
+        } else if self.numbers.get(pos)? > 1 {
+            Ok(ItemType::Number(self.numbers.get(pos)?))
         } else {
             Ok(ItemType::Nothing)
         }
@@ -589,13 +589,9 @@ impl Board {
 
 impl<'a> std::fmt::Display for Board {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (i, row) in self.framebuffer.iter().enumerate() {
-            for (j, symbol) in row.iter().enumerate() {
-                if symbol.len() == 1 && self.config.char_width == 2 {
-                    write!(f, "1{}", self.numbers.symbol)?;
-                } else {
-                    write!(f, "{}", symbol)?;
-                }
+        for row in &self.framebuffer {
+            for symbol in row {
+                write!(f, "{}", symbol)?;
             }
             write!(f, "\n\r")?;
         }
