@@ -16,8 +16,7 @@ use crossterm::{
 };
 
 use rand::prelude::*;
-use std::io::{stdout, Cursor};
-use std::ops::ControlFlow;
+use std::io::stdout;
 
 #[derive(Clone, Debug)]
 pub enum GameState {
@@ -28,17 +27,17 @@ pub enum GameState {
 }
 
 #[derive(Clone, Debug)]
-pub struct Game {
-    board: Board,
-    state: GameState,
-}
-
-#[derive(Clone, Debug)]
 pub enum Direction {
     Up,
     Down,
     Left,
     Right,
+}
+
+#[derive(Clone, Debug)]
+pub struct Game {
+    board: Board,
+    state: GameState,
 }
 
 impl Game {
@@ -180,7 +179,7 @@ impl Game {
     fn process_mouse(&mut self, stdout: &mut std::io::Stdout, mouse_event: MouseEvent) {
         let mut x = mouse_event.column;
         if x % 2 == 1 {
-            x += 1;
+            x -= 1;
         }
         let y = mouse_event.row;
         execute!(stdout, cursor::MoveTo(x, y)).unwrap();
@@ -262,6 +261,6 @@ impl Game {
 
 pub fn test1() {
     let board_config = BoardConfig::unicode(20, 20, Color::Reset);
-    let mut game = Game::new(board_config, 4).unwrap();
+    let mut game = Game::new(board_config, 20).unwrap();
     game.game_loop();
 }
